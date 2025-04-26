@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deli Tracker</title>
+    <title>Deli Tracker - Трекер посылок</title>
     <style>
         body {
             font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
@@ -18,6 +18,7 @@
         h1 {
             color: #FF5500;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+            margin-top: 40px; /* Вот этот отступ "в палец" */
         }
         input {
             padding: 8px;
@@ -66,10 +67,23 @@
         strong {
             color: #FF5500;
         }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #FF5500;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
-    <h1>Deli Tracker</h1>
+    <h1>Deli Tracker - Трекер посылок</h1>
     <p>Введите трек-номер для отслеживания (например, 12345678901 или RA123456789RU):</p>
     
     <input type="text" id="trackNumber" placeholder="Трек-номер">
@@ -87,39 +101,46 @@
                 return;
             }
             
-            resultDiv.innerHTML = 'Загрузка данных...';
+            // Проверка формата трек-номера
+            if (!/^[0-9]{14}$|^[A-Za-z]{2}[0-9]{9}[A-Za-z]{2}$/.test(trackNumber)) {
+                resultDiv.innerHTML = '<div class="error">Неверный формат трек-номера. Введите 14 цифр или международный номер (например, RA123456789RU)</div>';
+                return;
+            }
+            
+            resultDiv.innerHTML = '<div class="loader"></div><p>Идет поиск информации...</p>';
             
             try {
-                // Используем прокси для обхода CORS, так как API Почты России не поддерживает CORS
-                const response = await fetch(`https://cors-anywhere.herokuapp.com/https://www.pochta.ru/tracking?p_p_id=trackingPortlet_WAR_portalportlet&p_p_lifecycle=2&p_p_state=normal&p_p_mode=view&p_p_resource_id=tracking.get-by-barcodes&p_p_cacheability=cacheLevelPage&p_p_col_id=column-1&p_p_col_count=1&barcodes=${trackNumber}`);
+                // Используем публичный API через proxy-сервер
+                const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(`https://www.pochta.ru/tracking/api/v1/trackings/by-barcode/${trackNumber}`)}`);
                 
                 if (!response.ok) {
-                    throw new Error('Ошибка при запросе к серверу');
+                    throw new Error('Сервер не отвечает. Попробуйте позже.');
                 }
                 
                 const data = await response.json();
+                const trackingData = JSON.parse(data.contents);
                 
-                if (data.errors && data.errors.length > 0) {
-                    resultDiv.innerHTML = `<div class="error">${data.errors[0].description}</div>`;
-                    return;
+                if (trackingData.error) {
+                    throw new Error(trackingData.error.message);
                 }
                 
-                if (!data.trackingItems || data.trackingItems.length === 0) {
+                if (!trackingData.details || trackingData.details.length === 0) {
                     resultDiv.innerHTML = '<div class="error">Информация по посылке не найдена</div>';
                     return;
                 }
                 
-                const packageInfo = data.trackingItems[0];
+                const packageInfo = trackingData.details[0];
                 let html = `<h3>Посылка: ${packageInfo.barcode}</h3>`;
+                html += `<p>Текущий статус: <strong>${packageInfo.eventName}</strong></p>`;
                 
-                if (packageInfo.trackingHistoryItemList && packageInfo.trackingHistoryItemList.length > 0) {
+                if (packageInfo.trackingItem && packageInfo.trackingItem.trackingHistoryItemList) {
                     html += '<h4>История перемещений:</h4>';
-                    packageInfo.trackingHistoryItemList.forEach(item => {
+                    packageInfo.trackingItem.trackingHistoryItemList.forEach(item => {
                         html += `
                             <div class="status-item">
                                 <strong>${item.operationName}</strong><br>
                                 ${item.operationAttribute || ''} ${item.operationPlace || ''}<br>
-                                <small>${item.operationDate}</small>
+                                <small>${new Date(item.operationDate).toLocaleString()}</small>
                             </div>
                         `;
                     });
@@ -129,10 +150,17 @@
                 
                 resultDiv.innerHTML = html;
             } catch (error) {
-                resultDiv.innerHTML = `<div class="error">Произошла ошибка: ${error.message}</div>`;
-                console.error(error);
+                resultDiv.innerHTML = `<div class="error">Ошибка: ${error.message}</div>`;
+                console.error('Tracking error:', error);
             }
         }
+        
+        // Автоматическое отслеживание при нажатии Enter
+        document.getElementById('trackNumber').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                trackPackage();
+            }
+        });
     </script>
 </body>
 </html>
